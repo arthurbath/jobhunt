@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Builds / dist
+/dist/
+/build/
+*.log
+
+# Local env
+.env
+.env.*
+
+# macOS metadata
+.DS_Store
+*.swp
