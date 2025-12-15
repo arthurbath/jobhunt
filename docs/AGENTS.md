@@ -1,4 +1,4 @@
-# Job Search Helper: Codex Agent Spec (Airtable Research + Ingestion)
+# Jobhunt: Codex Agent Spec (Airtable Research + Ingestion)
 
 This file is written for Codex. It defines the exact behavior, data model, and edge cases for a project that:
 1) researches a company and its Product Management (or PM-adjacent) roles, and

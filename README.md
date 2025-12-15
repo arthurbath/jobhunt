@@ -1,4 +1,4 @@
-# Job Search Helper
+# Jobhunt
 
 CLI/agent that researches target companies and PM-friendly roles, then syncs results into Airtable per `docs/AGENTS.md`.
 
