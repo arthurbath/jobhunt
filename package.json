@@ -1,0 +1,23 @@
+{
+  "name": "job-search-helper",
+  "version": "0.1.0",
+  "description": "Codex agent CLI for researching companies and syncing results to Airtable",
+  "type": "module",
+  "bin": {
+    "jobhunt": "./bin/jobhunt.js"
+  },
+  "scripts": {
+    "start": "node ./bin/jobhunt.js",
+    "lint": "echo 'No lint configured'",
+    "test": "echo 'No tests yet'"
+  },
+  "dependencies": {
+    "axios": "^1.6.8",
+    "chalk": "^5.3.0",
+    "cheerio": "^1.0.0-rc.12",
+    "commander": "^11.1.0",
+    "dotenv": "^16.4.1",
+    "openai": "^6.10.0",
+    "ora": "^6.3.1"
+  }
+}

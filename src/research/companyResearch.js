@@ -1,0 +1,445 @@
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+import { instantAnswer, searchWeb } from './duckduckgo.js';
+import { discoverProductRoles } from './jobBoards.js';
+import { resolveCompanyWebsite, scrapeCompanySite } from './siteScraper.js';
+import {
+  inferCompanyTypeAdvanced,
+  inferLocality,
+  truncateSentences,
+} from '../utils/text.js';
+import { generateCompanyInsights, evaluateBcorpStatus, isOpenAIEnabled } from '../services/gptResearcher.js';
+
+const REQUEST_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
+};
+
+const TYPESENSE_HOSTS = [
+  'https://94eo8lmsqa0nd3j5p.a1.typesense.net',
+  'https://94eo8lmsqa0nd3j5p-1.a1.typesense.net',
+  'https://94eo8lmsqa0nd3j5p-2.a1.typesense.net',
+  'https://94eo8lmsqa0nd3j5p-3.a1.typesense.net',
+  'https://94eo8lmsqa0nd3j5p-4.a1.typesense.net',
+  'https://94eo8lmsqa0nd3j5p-5.a1.typesense.net',
+];
+const TYPESENSE_COLLECTION = 'companies-production-en-us';
+const TYPESENSE_API_KEY = process.env.BCORP_TYPESENSE_KEY || 'IpJoOPZUczKNxR54gCnU8sjVNGCyXj21';
+const TYPESENSE_QUERY_BY =
+  'name,description,websiteKeywords,countries,industry,sector,hqCountry,hqProvince,hqCity,hqPostalCode,provinces,cities,size,demographicsList';
+const DIRECTORY_PROFILE_URL = (slug) =>
+  `https://www.bcorporation.net/en-us/find-a-b-corp/company/${slug}`;
+const COMPANY_TYPE_VALUES = new Set([
+  'Corporate',
+  'Nonprofit',
+  'Foundation',
+  'Education',
+  'Government',
+  'Startup: Seed',
+  'Startup: Series A',
+  'Startup: Series B',
+  'Startup: Series C',
+  'Startup: Other/Unknown',
+]);
+function normalizeForMatch(text = '') {
+  return text.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function htmlToPlainText(html = '') {
+  if (!html) return '';
+  const $ = cheerio.load(html);
+  return $('body').text().replace(/\s+/g, ' ').trim();
+}
+
+async function fetchPageText(url) {
+  if (!url) return null;
+  try {
+    const { data } = await axios.get(url, { headers: REQUEST_HEADERS, timeout: 12000 });
+    if (typeof data === 'string') return data;
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
+async function scrapeGlassdoorRating(url) {
+  const html = await fetchPageText(url);
+  if (!html) return null;
+  const $ = cheerio.load(html);
+  const rating =
+    $('[data-test=\"rating\"]').first().text().trim() ||
+    $('span[itemprop=\"ratingValue\"]').first().text().trim() ||
+    $('div.v2__EIReviewsRatingsStylesV2__ratingNum').first().text().trim();
+  const value = Number(rating);
+  return Number.isFinite(value) ? value : null;
+}
+
+export class CompanyResearcher {
+  constructor(name) {
+    this.name = name;
+    this.lastScrapedWebsiteHtml = null;
+    this.lastScrapedWebsiteUrl = null;
+    this.lastScrapedWebsiteText = null;
+    this.lastInstantAnswerText = null;
+    this.internalWarnings = new Set();
+  }
+
+  async research() {
+    const sourcesSet = new Set();
+    const baseResult = {
+      name: this.name,
+      website: null,
+      careersPage: null,
+      description2Sentences: null,
+      local: null,
+      type: null,
+      bcorp: null,
+      bcorpEvidence: null,
+      glassdoorPage: null,
+      glassdoorRating: null,
+      roles: [],
+      sources: [],
+      warnings: [],
+    };
+
+    const summary = await this.collectGeneralInfo();
+    Object.assign(baseResult, summary);
+    if (summary.warnings?.length) {
+      baseResult.warnings.push(...summary.warnings);
+    }
+    summary.sources?.forEach((src) => sourcesSet.add(src));
+
+    await this.applyGptInsights(baseResult, summary);
+
+    const [careers, bcorp, glassdoor] = await Promise.all([
+      this.findCareersPage(summary.candidateCareersPage, summary.website),
+      this.findBCorpEvidence(),
+      this.findGlassdoorPage(),
+    ]);
+
+    if (careers?.url) {
+      baseResult.careersPage = careers.url;
+      sourcesSet.add(careers.url);
+    }
+    if (bcorp?.url) {
+      baseResult.bcorp = true;
+      baseResult.bcorpEvidence = bcorp.url;
+      sourcesSet.add(bcorp.url);
+    } else {
+      baseResult.bcorp = false;
+    }
+    if (glassdoor?.url) {
+      baseResult.glassdoorPage = glassdoor.url;
+      baseResult.glassdoorRating = glassdoor.rating;
+      sourcesSet.add(glassdoor.url);
+    }
+
+    if (typeof baseResult.local !== 'boolean' && baseResult.description2Sentences) {
+      baseResult.local = inferLocality(baseResult.description2Sentences);
+    }
+
+    let roles = await this.discoverRoles({
+      companyName: this.name,
+      website: baseResult.website,
+      careersPage: baseResult.careersPage,
+    });
+    if (!roles.length) {
+      const theorized = this.theorizeRole({
+        description: baseResult.description2Sentences,
+        bodyText: summary.bodyText,
+        website: baseResult.website,
+      });
+      if (theorized) {
+        roles = [theorized];
+      }
+    }
+    // If no active listing nor convincing signals exist, it's acceptable to return zero roles.
+    baseResult.roles = roles;
+
+    baseResult.type =
+      baseResult.type ||
+      inferCompanyTypeAdvanced(
+        baseResult.description2Sentences || '',
+        summary.bodyText || ''
+      );
+
+    baseResult.sources = Array.from(sourcesSet);
+    if (this.internalWarnings.size) {
+      baseResult.warnings.push(...Array.from(this.internalWarnings));
+    }
+    return baseResult;
+  }
+
+  async collectGeneralInfo() {
+    const info = {
+      description2Sentences: null,
+      website: null,
+      local: null,
+      type: null,
+      sources: [],
+      warnings: [],
+      candidateCareersPage: null,
+      bodyText: '',
+    };
+    try {
+      const website = await resolveCompanyWebsite(this.name);
+      info.website = website;
+      if (website) {
+        info.sources.push(website);
+        const profile = await scrapeCompanySite(website);
+        if (profile) {
+          info.bodyText = profile.bodyText || '';
+          info.description2Sentences = profile.description || null;
+          info.local = profile.locationMentions?.length ? true : null;
+          info.candidateCareersPage = profile.candidateCareersPage;
+          profile.sources?.forEach((src) => info.sources.push(src));
+          if (profile.rawHtml) {
+            this.lastScrapedWebsiteHtml = profile.rawHtml;
+            this.lastScrapedWebsiteUrl = profile.primaryUrl || website;
+            this.lastScrapedWebsiteText = htmlToPlainText(profile.rawHtml);
+          }
+        }
+      }
+
+      const data = await instantAnswer(this.name);
+      if (!info.website) {
+        info.website = data.AbstractURL || (data.Results && data.Results[0]?.FirstURL) || null;
+        if (info.website) info.sources.push(info.website);
+      }
+      if (!info.description2Sentences) {
+        info.description2Sentences = truncateSentences(
+          data.Abstract || data.Description || data.Heading || '',
+          2
+        );
+      }
+      this.lastInstantAnswerText =
+        data.AbstractText ||
+        data.Abstract ||
+        data.Text ||
+        data.Description ||
+        data.Heading ||
+        '';
+      if (info.description2Sentences && typeof info.local !== 'boolean') {
+        info.local = inferLocality(info.description2Sentences);
+      }
+      info.type = info.description2Sentences
+        ? inferCompanyTypeAdvanced(info.description2Sentences, info.bodyText)
+        : null;
+    } catch (err) {
+      info.warnings.push(`Failed to gather initial profile: ${err.message}`);
+    }
+    info.sources = Array.from(new Set(info.sources.filter(Boolean)));
+    return info;
+  }
+
+  async findCareersPage(hintUrl, website) {
+    if (hintUrl) {
+      return { url: hintUrl };
+    }
+    const candidates = [];
+    if (website) {
+      candidates.push(`${website.replace(/\/$/, '')}/careers`);
+      candidates.push(`${website.replace(/\/$/, '')}/jobs`);
+    }
+    for (const candidate of candidates) {
+      const html = await fetchPageText(candidate);
+      if (html) {
+        return { url: candidate };
+      }
+    }
+    const results = await searchWeb(`${this.name} careers`, 6);
+    return results.find((r) => /career|jobs|join/.test(r.url)) || results[0] || null;
+  }
+
+  async findBCorpEvidence() {
+    const directoryResults = await this.fetchDirectoryResults();
+    const officialSite =
+      this.lastScrapedWebsiteText && this.lastScrapedWebsiteUrl
+        ? { url: this.lastScrapedWebsiteUrl, text: this.lastScrapedWebsiteText }
+        : null;
+
+    const searchSummary = directoryResults?.summary || '';
+    const directMatch = directoryResults?.hits.find(
+      (hit) => hit.isCertified && this.isMatchingCompanyName(hit.name)
+    );
+    if (directMatch?.profileUrl) {
+      return { url: directMatch.profileUrl };
+    }
+
+    if (isOpenAIEnabled()) {
+      try {
+        const verdict = await evaluateBcorpStatus({
+          name: this.name,
+          directorySummary: searchSummary,
+          officialSite,
+        });
+        if (verdict?.isBcorp) {
+          return { url: verdict.evidenceUrl || directoryResults?.searchUrl || directMatch?.profileUrl || this.lastScrapedWebsiteUrl || null };
+        }
+      } catch (err) {
+        this.warnOnce('GPT B Corp evaluation failed', err);
+      }
+    } else {
+      this.warnOnce('GPT B Corp evaluation skipped (OpenAI disabled).');
+    }
+
+    if (directMatch?.profileUrl) {
+      return { url: directMatch.profileUrl };
+    }
+
+    const verifiedOfficial = await this.scanOfficialSiteForBCorpClaim();
+    if (verifiedOfficial) {
+      return verifiedOfficial;
+    }
+
+    return null;
+  }
+
+  async scanOfficialSiteForBCorpClaim() {
+    if (!this.lastScrapedWebsiteText) return null;
+    const normalizedPage = normalizeForMatch(this.lastScrapedWebsiteText);
+    const normalizedName = normalizeForMatch(this.name);
+    const hasClaim =
+      normalizedPage.includes('certifiedbcorp') ||
+      normalizedPage.includes('certifiedbcorporation') ||
+      normalizedPage.includes('bcorp');
+    if (hasClaim && normalizedPage.includes(normalizedName)) {
+      return { url: this.lastScrapedWebsiteUrl };
+    }
+    return null;
+  }
+
+  async findGlassdoorPage() {
+    const results = await searchWeb(`${this.name} Glassdoor`, 6);
+    const glassdoorResult = results.find((r) => r.url.includes('glassdoor.com'));
+    if (!glassdoorResult) return null;
+    const rating = await scrapeGlassdoorRating(glassdoorResult.url);
+    return {
+      url: glassdoorResult.url,
+      rating,
+    };
+  }
+
+  async discoverRoles({ companyName, website, careersPage }) {
+    return discoverProductRoles({ companyName, website, careersPage });
+  }
+
+  async applyGptInsights(baseResult, summary) {
+    if (!isOpenAIEnabled()) {
+      this.warnOnce('GPT insights skipped (OpenAI disabled).');
+      return;
+    }
+    try {
+      const insights = await generateCompanyInsights({
+        name: this.name,
+        websiteText: summary.bodyText || this.lastScrapedWebsiteText || '',
+        instantAnswerText: this.lastInstantAnswerText || '',
+        extraFacts: summary.description2Sentences || '',
+      });
+      if (!insights) return;
+      if (insights.description) {
+        baseResult.description2Sentences = insights.description;
+      }
+      if (insights.companyType && COMPANY_TYPE_VALUES.has(insights.companyType)) {
+        baseResult.type = insights.companyType;
+      }
+      if (typeof insights.isSanDiegoLocal === 'boolean') {
+        baseResult.local = insights.isSanDiegoLocal;
+      }
+    } catch (error) {
+      this.warnOnce('GPT insights failed', error);
+    }
+  }
+
+  theorizeRole({ description, bodyText, website }) {
+    const corpus = `${description || ''} ${bodyText || ''}`.toLowerCase();
+    const productSignals = ['software', 'platform', 'product', 'saas', 'app', 'digital', 'tech', 'data', 'api'];
+    const pmSignals = ['product manager', 'product ops', 'product operations', 'technical program'];
+    const industrySignals = ['climate tech', 'ai', 'machine learning', 'analytics', 'marketplace', 'cloud', 'infrastructure'];
+    const hasProductSignal =
+      productSignals.some((token) => corpus.includes(token)) ||
+      pmSignals.some((token) => corpus.includes(token));
+    const hasIndustrySignal = industrySignals.some((token) => corpus.includes(token));
+    if (!hasProductSignal && !hasIndustrySignal) {
+      return null;
+    }
+    const commentaryPieces = [];
+    if (hasProductSignal) commentaryPieces.push('Company materials emphasize software/product work.');
+    if (hasIndustrySignal) commentaryPieces.push('Industry context implies dedicated product leadership.');
+    const commentary = commentaryPieces.join(' ');
+    const sources = website ? [website] : [];
+    return {
+      name: 'Product Manager (theorized)',
+      candidateFit: 'High',
+      activeListing: null,
+      location: null,
+      sources,
+      commentary: commentary || 'Likely leverages PM roles despite no active postings.',
+    };
+  }
+  warnOnce(message, error) {
+    const text = error?.message ? `${message}: ${error.message}` : message;
+    if (!this.internalWarnings.has(text)) {
+      this.internalWarnings.add(text);
+    }
+  }
+
+  async fetchDirectoryResults() {
+    const params = {
+      q: this.name,
+      query_by: TYPESENSE_QUERY_BY,
+      per_page: 25,
+    };
+    for (const host of TYPESENSE_HOSTS) {
+      try {
+        const { data } = await axios.get(
+          `${host}/collections/${TYPESENSE_COLLECTION}/documents/search`,
+          {
+            params,
+            headers: { 'X-TYPESENSE-API-KEY': TYPESENSE_API_KEY },
+            timeout: 9000,
+          }
+        );
+        const hits = (data?.hits || []).map((hit) => {
+          const doc = hit.document || {};
+          return {
+            name: doc.name || '',
+            slug: doc.slug || '',
+            isCertified: Boolean(doc.isCertified),
+            description: doc.description || '',
+            score: hit?.highlight || null,
+            profileUrl: doc.slug ? DIRECTORY_PROFILE_URL(doc.slug) : null,
+          };
+        });
+        const summary = hits
+          .map(
+            (hit, idx) =>
+              `Result ${idx + 1}: name="${hit.name}" slug="${hit.slug}" certified=${hit.isCertified} url=${hit.profileUrl || 'n/a'}`
+          )
+          .join('\n');
+        return {
+          hits,
+          summary,
+          searchUrl: `https://www.bcorporation.net/en-us/find-a-b-corp/?query=${encodeURIComponent(this.name)}`,
+        };
+      } catch (err) {
+        // try next host
+        continue;
+      }
+    }
+    this.warnOnce('Failed to fetch B Corp directory results');
+    return null;
+  }
+
+  isMatchingCompanyName(candidate) {
+    if (!candidate) return false;
+    const normalizedTarget = normalizeForMatch(this.name);
+    const normalizedCandidate = normalizeForMatch(candidate);
+    if (!normalizedCandidate || !normalizedTarget) return false;
+    return (
+      normalizedCandidate === normalizedTarget ||
+      normalizedCandidate.includes(normalizedTarget) ||
+      normalizedTarget.includes(normalizedCandidate)
+    );
+  }
+}
