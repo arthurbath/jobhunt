@@ -2,6 +2,7 @@
   "name": "job-search-helper",
   "version": "0.1.0",
   "description": "Codex agent CLI for researching companies and syncing results to Airtable",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "jobhunt": "./bin/jobhunt.js"
