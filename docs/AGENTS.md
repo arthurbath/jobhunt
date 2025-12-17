@@ -56,8 +56,8 @@ Fields Codex must populate (when possible):
   - Startup: Other/Unknown
 - B Corp (checkbox / boolean) REQUIRED
 - B Corp Evidence (url)
-- Glassdoor Page (url)
 - Glassdoor Rating (number)
+- Glassdoor Page (url)
 
 Also present (read-only):
 - Lookups of AOI characteristic fields (do not edit)
@@ -139,6 +139,8 @@ If a fact cannot be verified with a source URL:
 Set a compmany's Local to TRUE only if you find evidence of:
 - an office address in San Diego County, OR
 - a company page explicitly listing "San Diego" (or a San Diego County city) as an office location.
+
+Codex no longer trusts heuristic keyword matches for this field. It must run the OpenAI-powered local research step (fed with official-site copy, the canonical website/domain, plus short search snippets referencing San Diego County cities) and only set Local=TRUE when that step cites explicit evidence tied to those sources for the same company (matching brand/domain). If OpenAI is unavailable or provides no confirmation/evidence, Local remains FALSE.
 
 ### Startup stage classification
 

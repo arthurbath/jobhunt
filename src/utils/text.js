@@ -1,4 +1,4 @@
-const SAN_DIEGO_CITIES = [
+export const SAN_DIEGO_CITIES = [
   'san diego',
   'carlsbad',
   'encinitas',

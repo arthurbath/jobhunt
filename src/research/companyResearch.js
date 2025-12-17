@@ -4,11 +4,17 @@ import { instantAnswer, searchWeb } from './duckduckgo.js';
 import { discoverProductRoles } from './jobBoards.js';
 import { resolveCompanyWebsite, scrapeCompanySite } from './siteScraper.js';
 import {
+  findSanDiegoMentions,
   inferCompanyTypeAdvanced,
-  inferLocality,
+  SAN_DIEGO_CITIES,
   truncateSentences,
 } from '../utils/text.js';
-import { generateCompanyInsights, evaluateBcorpStatus, isOpenAIEnabled } from '../services/gptResearcher.js';
+import {
+  generateCompanyInsights,
+  evaluateBcorpStatus,
+  isOpenAIEnabled,
+  researchLocalPresence,
+} from '../services/gptResearcher.js';
 
 const REQUEST_HEADERS = {
   'User-Agent':
@@ -91,7 +97,6 @@ export class CompanyResearcher {
       website: null,
       careersPage: null,
       description2Sentences: null,
-      local: null,
       type: null,
       bcorp: null,
       bcorpEvidence: null,
@@ -110,6 +115,7 @@ export class CompanyResearcher {
     summary.sources?.forEach((src) => sourcesSet.add(src));
 
     await this.applyGptInsights(baseResult, summary);
+    await this.applyGptLocalResearch(baseResult, summary, sourcesSet);
 
     const [careers, bcorp, glassdoor] = await Promise.all([
       this.findCareersPage(summary.candidateCareersPage, summary.website),
@@ -132,10 +138,6 @@ export class CompanyResearcher {
       baseResult.glassdoorPage = glassdoor.url;
       baseResult.glassdoorRating = glassdoor.rating;
       sourcesSet.add(glassdoor.url);
-    }
-
-    if (typeof baseResult.local !== 'boolean' && baseResult.description2Sentences) {
-      baseResult.local = inferLocality(baseResult.description2Sentences);
     }
 
     let roles = await this.discoverRoles({
@@ -190,7 +192,6 @@ export class CompanyResearcher {
         if (profile) {
           info.bodyText = profile.bodyText || '';
           info.description2Sentences = profile.description || null;
-          info.local = profile.locationMentions?.length ? true : null;
           info.candidateCareersPage = profile.candidateCareersPage;
           profile.sources?.forEach((src) => info.sources.push(src));
           if (profile.rawHtml) {
@@ -219,9 +220,6 @@ export class CompanyResearcher {
         data.Description ||
         data.Heading ||
         '';
-      if (info.description2Sentences && typeof info.local !== 'boolean') {
-        info.local = inferLocality(info.description2Sentences);
-      }
       info.type = info.description2Sentences
         ? inferCompanyTypeAdvanced(info.description2Sentences, info.bodyText)
         : null;
@@ -343,12 +341,85 @@ export class CompanyResearcher {
       if (insights.companyType && COMPANY_TYPE_VALUES.has(insights.companyType)) {
         baseResult.type = insights.companyType;
       }
-      if (typeof insights.isSanDiegoLocal === 'boolean') {
-        baseResult.local = insights.isSanDiegoLocal;
-      }
     } catch (error) {
       this.warnOnce('GPT insights failed', error);
     }
+  }
+
+  async applyGptLocalResearch(baseResult, summary, sourcesSet) {
+    if (!isOpenAIEnabled()) {
+      this.warnOnce('GPT local research skipped (OpenAI disabled).');
+      return;
+    }
+    try {
+      const searchResults = await this.fetchLocalSearchResults();
+      const verdict = await researchLocalPresence({
+        name: this.name,
+        website: summary.website || baseResult.website,
+        description: summary.description2Sentences || '',
+        websiteText: summary.bodyText || '',
+        searchResults,
+      });
+      if (
+        verdict &&
+        typeof verdict.isSanDiegoLocal === 'boolean' &&
+        (verdict.isSanDiegoLocal ? verdict.evidenceUrls?.length : true)
+      ) {
+        baseResult.local = verdict.isSanDiegoLocal;
+        verdict.evidenceUrls?.forEach((url) => {
+          if (url) sourcesSet.add(url);
+        });
+      } else if (verdict?.isSanDiegoLocal) {
+        this.warnOnce('GPT local research returned TRUE without evidence URLs.');
+        baseResult.local = false;
+      }
+    } catch (error) {
+      this.warnOnce('GPT local research failed', error);
+    }
+  }
+
+  async fetchLocalSearchResults() {
+    const primaryQueries = [
+      `${this.name} "San Diego" office`,
+      `${this.name} "San Diego" location`,
+      `${this.name} "San Diego" headquarters`,
+    ];
+    const cityQueries = SAN_DIEGO_CITIES.filter((city) => city !== 'san diego').map(
+      (city) => `${this.name} "${city}" office`
+    );
+    const queries = [...primaryQueries, ...cityQueries];
+    const seen = new Set();
+    const results = [];
+    let positiveMentions = 0;
+    const MAX_RESULTS = 18;
+
+    for (const query of queries) {
+      let hits = [];
+      try {
+        hits = await searchWeb(query, 3);
+      } catch (err) {
+        this.warnOnce(`Local search failed for "${query}"`, err);
+        continue;
+      }
+      for (const hit of hits) {
+        if (!hit?.url || seen.has(hit.url)) continue;
+        seen.add(hit.url);
+        const snippet = hit.snippet || '';
+        results.push({
+          query,
+          title: hit.title,
+          url: hit.url,
+          snippet,
+        });
+        if (findSanDiegoMentions(snippet).length) {
+          positiveMentions += 1;
+        }
+        if (results.length >= MAX_RESULTS || positiveMentions >= 3) {
+          return results;
+        }
+      }
+    }
+    return results;
   }
 
   theorizeRole({ description, bodyText, website }) {
