@@ -17,6 +17,9 @@ function buildCompanyPayload(research) {
     'B Corp Evidence': research.bcorpEvidence || null,
     'Glassdoor Page': research.glassdoorPage || null,
     'Glassdoor Rating': research.glassdoorRating || null,
+    'Year Founded': research.glassdoorYearFounded || null,
+    'Business Outlook Rating': research.glassdoorBusinessOutlookRating || null,
+    'CEO Rating': research.glassdoorCeoRating || null,
   };
   if (research.aoiRecordId) {
     fields['Area of Interest'] = [research.aoiRecordId];

@@ -16,6 +16,7 @@ import {
   researchLocalPresence,
   researchCompanyType,
 } from '../services/gptResearcher.js';
+import { openWebNinjaClient } from '../services/openWebNinja.js';
 
 const REQUEST_HEADERS = {
   'User-Agent':
@@ -103,6 +104,9 @@ export class CompanyResearcher {
       bcorpEvidence: null,
       glassdoorPage: null,
       glassdoorRating: null,
+      glassdoorYearFounded: null,
+      glassdoorBusinessOutlookRating: null,
+      glassdoorCeoRating: null,
       roles: [],
       sources: [],
       warnings: [],
@@ -139,6 +143,9 @@ export class CompanyResearcher {
     if (glassdoor?.url) {
       baseResult.glassdoorPage = glassdoor.url;
       baseResult.glassdoorRating = glassdoor.rating;
+      baseResult.glassdoorYearFounded = glassdoor.yearFounded ?? null;
+      baseResult.glassdoorBusinessOutlookRating = glassdoor.businessOutlookRating ?? null;
+      baseResult.glassdoorCeoRating = glassdoor.ceoRating ?? null;
       sourcesSet.add(glassdoor.url);
     }
 
@@ -310,6 +317,10 @@ export class CompanyResearcher {
   }
 
   async findGlassdoorPage() {
+    const apiResult = await this.fetchGlassdoorViaOpenWeb();
+    if (apiResult) {
+      return apiResult;
+    }
     const results = await searchWeb(`${this.name} Glassdoor`, 6);
     const glassdoorResult = results.find((r) => r.url.includes('glassdoor.com'));
     if (!glassdoorResult) return null;
@@ -318,6 +329,32 @@ export class CompanyResearcher {
       url: glassdoorResult.url,
       rating,
     };
+  }
+
+  async fetchGlassdoorViaOpenWeb() {
+    if (!openWebNinjaClient?.isEnabled?.()) {
+      return null;
+    }
+    try {
+      const payload = await openWebNinjaClient.fetchGlassdoorCompany(this.name);
+      if (!payload) {
+        return null;
+      }
+      const { url, rating, yearFounded, businessOutlookRating, ceoRating } = payload;
+      if (!url && rating == null) {
+        return null;
+      }
+      return {
+        url: url || null,
+        rating: rating ?? null,
+        yearFounded: yearFounded ?? null,
+        businessOutlookRating: businessOutlookRating ?? null,
+        ceoRating: ceoRating ?? null,
+      };
+    } catch (err) {
+      this.warnOnce('OpenWeb Ninja Glassdoor lookup failed', err);
+      return null;
+    }
   }
 
   async discoverRoles({ companyName, website, careersPage }) {

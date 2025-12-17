@@ -44,6 +44,9 @@ export class AirtableClient {
       'B Corp Evidence': company.bcorpEvidence,
       'Glassdoor Page': company.glassdoorPage,
       'Glassdoor Rating': company.glassdoorRating,
+      'Year Founded': company.glassdoorYearFounded,
+      'Business Outlook Rating': company.glassdoorBusinessOutlookRating,
+      'CEO Rating': company.glassdoorCeoRating,
     };
     if (company.aoiRecordId) {
       fields['Area of Interest'] = [company.aoiRecordId];

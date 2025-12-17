@@ -17,4 +17,12 @@ export const config = {
   },
   // optional OpenAI key for future enhancements
   openAiKey: process.env.OPENAI_API_KEY || null,
+  openWebNinja: {
+    apiKey: process.env.OPENWEB_NINJA_API_KEY || null,
+    baseUrl: process.env.OPENWEB_NINJA_BASE_URL || 'https://api.openwebninja.com',
+    glassdoorPath:
+      process.env.OPENWEB_NINJA_GLASSDOOR_PATH || '/realtime-glassdoor-data/company-search',
+    domain: process.env.OPENWEB_NINJA_DOMAIN || 'www.glassdoor.com',
+    limit: Number(process.env.OPENWEB_NINJA_LIMIT) || 5,
+  },
 };

@@ -58,6 +58,9 @@ Fields Codex must populate (when possible):
 - B Corp Evidence (url)
 - Glassdoor Rating (number)
 - Glassdoor Page (url)
+- Year Founded (number) — captured from Glassdoor/OpenWeb Ninja when available
+- Business Outlook Rating (number) — Glassdoor float (0-1 range) stored directly; Airtable formats as percent
+- CEO Rating (number) — Glassdoor float (0-1 range) stored directly; Airtable formats as percent
 
 Also present (read-only):
 - Lookups of AOI characteristic fields (do not edit)
@@ -127,6 +130,10 @@ Additionally, the program should print structured logs to stdout:
 4) B Lab directory for B Corp verification
 5) Glassdoor for rating and link
 6) Reputable news sources (for funding stage signals)
+
+### Glassdoor data pipeline
+
+When `OPENWEB_NINJA_API_KEY` is provided in the environment, Codex must attempt to fetch the Glassdoor metrics (canonical URL, rating, year founded, business outlook score, CEO rating) through the OpenWeb Ninja API. The current contract targets `https://api.openwebninja.com/realtime-glassdoor-data/company-search` with `query=<company name>` plus `domain=www.glassdoor.com` (overridable via env). Before changing, troubleshooting, or extending this behavior, review the official API documentation at https://www.openwebninja.com/api/real-time-glassdoor-data/docs to ensure requests stay compliant. If the API returns no match or errors, fall back to the previous DuckDuckGo + scraping path. Regardless of the source, always capture a `glassdoor.com` URL alongside any metrics that are written to Airtable.
 
 ### No hallucinations
 

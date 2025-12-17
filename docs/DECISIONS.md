@@ -22,3 +22,13 @@ This file captures important choices made during development so they remain disc
    - Added `jobhunt refresh-company` command: deletes the target company and its roles from Airtable prior to re-running research to ensure clean, up-to-date records.
 8. **GPT-Powered Research Enhancements**
    - Integrated OpenAI (optional via `OPENAI_API_KEY`) so GPT crafts company descriptions, infers type/local presence, and evaluates B Corp evidence using scraped context; deterministic heuristics remain as fallback.
+
+## 2025-12-16
+1. **OpenWeb Ninja Glassdoor Integration**
+   - Added optional `OPENWEB_NINJA_*` env vars plus a dedicated client for the OpenWeb Ninja API.
+   - Company research now relies on that API for Glassdoor ratings/links when available, with the previous DuckDuckGo scraping workflow as a fallback to maintain resilience.
+2. **Correct OpenWeb Ninja Endpoint**
+   - Updated defaults to hit `https://api.openwebninja.com/realtime-glassdoor-data/company-search` with configurable `domain`/`limit` params so requests match the official curl guidance.
+   - Extended documentation/spec guidance to make the expected endpoint/query contract explicit.
+3. **Expanded Glassdoor Fields**
+   - Glassdoor ingestion now captures founding year plus business outlook and CEO ratings, and writes them to the corresponding Airtable fields when available.
