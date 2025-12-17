@@ -14,6 +14,7 @@ import {
   evaluateBcorpStatus,
   isOpenAIEnabled,
   researchLocalPresence,
+  researchCompanyType,
 } from '../services/gptResearcher.js';
 
 const REQUEST_HEADERS = {
@@ -116,6 +117,7 @@ export class CompanyResearcher {
 
     await this.applyGptInsights(baseResult, summary);
     await this.applyGptLocalResearch(baseResult, summary, sourcesSet);
+    await this.applyGptTypeResearch(baseResult, summary, sourcesSet);
 
     const [careers, bcorp, glassdoor] = await Promise.all([
       this.findCareersPage(summary.candidateCareersPage, summary.website),
@@ -378,6 +380,37 @@ export class CompanyResearcher {
     }
   }
 
+  async applyGptTypeResearch(baseResult, summary, sourcesSet) {
+    if (!isOpenAIEnabled()) {
+      this.warnOnce('GPT type research skipped (OpenAI disabled).');
+      return;
+    }
+    try {
+      const searchResults = await this.fetchTypeSearchResults();
+      const verdict = await researchCompanyType({
+        name: this.name,
+        website: summary.website || baseResult.website,
+        description: summary.description2Sentences || '',
+        websiteText: summary.bodyText || '',
+        searchResults,
+      });
+      if (
+        verdict?.companyType &&
+        COMPANY_TYPE_VALUES.has(verdict.companyType) &&
+        verdict.evidenceUrls?.length
+      ) {
+        baseResult.type = verdict.companyType;
+        verdict.evidenceUrls.forEach((url) => {
+          if (url) sourcesSet.add(url);
+        });
+      } else if (verdict?.companyType) {
+        this.warnOnce('GPT type research returned a type without evidence URLs.');
+      }
+    } catch (error) {
+      this.warnOnce('GPT type research failed', error);
+    }
+  }
+
   async fetchLocalSearchResults() {
     const primaryQueries = [
       `${this.name} "San Diego" office`,
@@ -415,6 +448,56 @@ export class CompanyResearcher {
           positiveMentions += 1;
         }
         if (results.length >= MAX_RESULTS || positiveMentions >= 3) {
+          return results;
+        }
+      }
+    }
+    return results;
+  }
+
+  async fetchTypeSearchResults() {
+    const queries = [
+      `${this.name} Crunchbase`,
+      `${this.name} GuideStar`,
+      `${this.name} organization profile`,
+      `${this.name} company overview`,
+    ];
+    const preferredDomains = ['crunchbase.com', 'guidestar.org', 'pitchbook.com', 'bloomberg.com'];
+    const results = [];
+    const seen = new Set();
+    const MAX_RESULTS = 16;
+
+    for (const query of queries) {
+      let hits = [];
+      try {
+        hits = await searchWeb(query, 5);
+      } catch (err) {
+        this.warnOnce(`Type search failed for "${query}"`, err);
+        continue;
+      }
+      for (const hit of hits) {
+        if (!hit?.url || seen.has(hit.url)) continue;
+        seen.add(hit.url);
+        let domain = null;
+        try {
+          domain = new URL(hit.url).hostname.replace(/^www\./, '');
+        } catch (err) {
+          domain = null;
+        }
+        if (preferredDomains.length && domain) {
+          const matchesPreferred = preferredDomains.some((d) => domain.endsWith(d));
+          if (!matchesPreferred && results.length >= MAX_RESULTS / 2) {
+            continue;
+          }
+        }
+        results.push({
+          query,
+          title: hit.title,
+          url: hit.url,
+          snippet: hit.snippet,
+          domain,
+        });
+        if (results.length >= MAX_RESULTS) {
           return results;
         }
       }

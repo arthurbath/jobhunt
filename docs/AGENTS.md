@@ -142,6 +142,10 @@ Set a compmany's Local to TRUE only if you find evidence of:
 
 Codex no longer trusts heuristic keyword matches for this field. It must run the OpenAI-powered local research step (fed with official-site copy, the canonical website/domain, plus short search snippets referencing San Diego County cities) and only set Local=TRUE when that step cites explicit evidence tied to those sources for the same company (matching brand/domain). If OpenAI is unavailable or provides no confirmation/evidence, Local remains FALSE.
 
+### Company Type classification
+
+Only assign Company.Type values from the allowed list. Codex should run the OpenAI-powered type research step, providing the official website/summary plus recent search snippets from reputable directories (Crunchbase, GuideStar, PitchBook, Bloomberg, etc.). Local heuristics are insufficient—GPT must cite at least one of those sources that clearly describes the organization before Type is set. If no trustworthy evidence is found or OpenAI is unavailable, leave Type null (it will default to "Corporate" only as a last-ditch heuristic).
+
 ### Startup stage classification
 
 Only assign a specific series stage when there is clear evidence (e.g., reputable coverage or a reliable database entry).

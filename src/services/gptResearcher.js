@@ -95,6 +95,28 @@ function extractHostname(url = '') {
   }
 }
 
+function formatTypeSearchResults(searchResults = []) {
+  if (!searchResults?.length) {
+    return 'No Crunchbase/GuideStar search snippets were available.';
+  }
+  return searchResults
+    .slice(0, 14)
+    .map((hit, idx) => {
+      const title = sanitize(hit.title || '', 300);
+      const snippet = sanitize(hit.snippet || '', 600);
+      return [
+        `Result ${idx + 1} | Query: ${hit.query}`,
+        hit.domain ? `Domain: ${hit.domain}` : null,
+        title ? `Title: ${title}` : null,
+        `URL: ${hit.url}`,
+        snippet ? `Snippet: ${snippet}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n');
+    })
+    .join('\n\n');
+}
+
 export async function researchLocalPresence({
   name,
   website,
@@ -199,6 +221,66 @@ export async function evaluateBcorpStatus({ name, directorySummary = '', officia
         reasoning: { type: ['string', 'null'] },
       },
       required: ['isBcorp'],
+    },
+  };
+
+  const content = await openaiClient.chat({
+    messages,
+    responseFormat: { type: 'json_schema', json_schema: schema },
+  });
+  return JSON.parse(content);
+}
+
+export async function researchCompanyType({
+  name,
+  website,
+  description = '',
+  websiteText = '',
+  searchResults = [],
+}) {
+  if (!isOpenAIEnabled()) return null;
+  const contextBlocks = [
+    `Company: ${name}`,
+    `Allowed Types: ${COMPANY_TYPES.join(', ')}`,
+    'Preferred Sources: Crunchbase, GuideStar, PitchBook, Bloomberg, reputable business directories.',
+  ];
+  if (website) {
+    contextBlocks.push(`Official Website: ${website}`);
+  }
+  if (description) {
+    contextBlocks.push(`Known Summary:\n${sanitize(description, 1200)}`);
+  }
+  if (websiteText) {
+    contextBlocks.push(`Website Copy:\n${sanitize(websiteText, 2000)}`);
+  }
+  contextBlocks.push(`Source Snippets:\n${formatTypeSearchResults(searchResults)}`);
+
+  const messages = [
+    {
+      role: 'system',
+      content:
+        'Classify the organization type using only the allowed values. '
+        + 'Rely on well-regarded business directories (Crunchbase, GuideStar, PitchBook, Bloomberg, etc.) '
+        + 'and ensure they refer to the same company (matching name/domain). '
+        + 'Prefer the most recent/factual description; if evidence conflicts or is insufficient, respond null. '
+        + 'Cite the supporting URLs for any non-null classification.',
+    },
+    {
+      role: 'user',
+      content: contextBlocks.join('\n\n'),
+    },
+  ];
+
+  const schema = {
+    name: 'CompanyTypeVerdict',
+    schema: {
+      type: 'object',
+      properties: {
+        companyType: { type: ['string', 'null'], enum: [...COMPANY_TYPES, null] },
+        reasoning: { type: ['string', 'null'] },
+        evidenceUrls: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['companyType'],
     },
   };
 
