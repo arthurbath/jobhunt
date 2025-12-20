@@ -117,6 +117,7 @@ function formatTypeSearchResults(searchResults = []) {
     .join('\n\n');
 }
 
+
 export async function researchLocalPresence({
   name,
   website,
@@ -185,6 +186,7 @@ export async function researchLocalPresence({
   });
   return JSON.parse(content);
 }
+
 
 export async function evaluateBcorpStatus({ name, directorySummary = '', officialSite }) {
   if (!isOpenAIEnabled()) return null;

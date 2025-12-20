@@ -7,14 +7,15 @@ const program = new Command();
 program
   .name('jobhunt')
   .description('Research companies and sync Product roles to Airtable')
-  .option('--dry-run', 'research only, do not write to Airtable');
+  .option('--dry-run', 'research only, do not write to Airtable')
+  .option('--skip-glassdoor', 'skip Glassdoor research to preserve API credits');
 
 program
   .command('add-company <name>')
   .description('Research and sync a single company')
   .action(async (name, cmd) => {
     const opts = program.opts();
-    await processCompanies([name], { dryRun: !!opts.dryRun });
+    await processCompanies([name], { dryRun: !!opts.dryRun, skipGlassdoor: !!opts.skipGlassdoor });
   });
 
 program
@@ -30,7 +31,7 @@ program
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
-    await processCompanies(names, { dryRun: !!opts.dryRun });
+    await processCompanies(names, { dryRun: !!opts.dryRun, skipGlassdoor: !!opts.skipGlassdoor });
   });
 
 program
@@ -38,7 +39,11 @@ program
   .description('Delete existing Airtable records for a company, then re-research it')
   .action(async (name) => {
     const opts = program.opts();
-    await processCompanies([name], { dryRun: !!opts.dryRun, refresh: true });
+    await processCompanies([name], {
+      dryRun: !!opts.dryRun,
+      refresh: true,
+      skipGlassdoor: !!opts.skipGlassdoor,
+    });
   });
 
 program

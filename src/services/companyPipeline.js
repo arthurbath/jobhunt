@@ -2,7 +2,6 @@ import ora from 'ora';
 import { config } from '../config.js';
 import { AirtableClient } from '../airtable.js';
 import { CompanyResearcher } from '../research/companyResearch.js';
-import { matchAOI } from './aoiMatcher.js';
 import { logger } from '../utils/logger.js';
 
 function buildCompanyPayload(research) {
@@ -21,9 +20,6 @@ function buildCompanyPayload(research) {
     'Business Outlook Rating': research.glassdoorBusinessOutlookRating || null,
     'CEO Rating': research.glassdoorCeoRating || null,
   };
-  if (research.aoiRecordId) {
-    fields['Area of Interest'] = [research.aoiRecordId];
-  }
   return fields;
 }
 
@@ -40,13 +36,15 @@ function buildRolePayloads(roles = []) {
   });
 }
 
-export async function processCompanies(companyNames, { dryRun = false, refresh = false } = {}) {
+export async function processCompanies(
+  companyNames,
+  { dryRun = false, refresh = false, skipGlassdoor = false } = {}
+) {
   if (!companyNames.length) {
     logger.warn('No companies provided.');
     return [];
   }
   const airtable = new AirtableClient(config.airtable);
-  const aois = await airtable.listAOIs();
   const logs = [];
 
   for (const name of companyNames) {
@@ -55,14 +53,9 @@ export async function processCompanies(companyNames, { dryRun = false, refresh =
       if (refresh && !dryRun) {
         await airtable.deleteCompanyAndRolesByName(name);
       }
-      const researcher = new CompanyResearcher(name);
+      const researcher = new CompanyResearcher(name, { skipGlassdoor });
       const research = await researcher.research();
       research.sources = Array.from(new Set(research.sources));
-
-      const matchedAoi = matchAOI(aois, research.description2Sentences, name);
-      if (matchedAoi) {
-        research.aoiRecordId = matchedAoi.id;
-      }
 
       const companyPayload = buildCompanyPayload(research);
       const rolePayloads = buildRolePayloads(research.roles);
@@ -81,6 +74,7 @@ export async function processCompanies(companyNames, { dryRun = false, refresh =
       }
 
       spinner.succeed(`${name} processed (${status})`);
+      research.sources = Array.from(new Set(research.sources));
       const logEntry = {
         company: name,
         status,

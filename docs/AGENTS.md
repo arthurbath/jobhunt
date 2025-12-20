@@ -8,7 +8,6 @@ This file is written for Codex. It defines the exact behavior, data model, and e
 
 Given a company name (or a list of names), Codex should:
 - research company facts (website, type, location, B Corp status, Glassdoor),
-- infer the best matching "Area of Interest" (AOI) from existing Airtable records,
 - find the company's public careers listings and identify any listings for software Product Management or PM-like roles that would be well-served by the skillset described in the attached resume (sibling file "Art Bath CV.pdf"),
 - discover and attach active job listings when available and within location constraints (remote or local to San Diego county, CA),
 - upsert all data into Airtable in a consistent, idempotent way (safe to run repeatedly).
@@ -32,7 +31,9 @@ Values are user-provided (do not modify). Codex must read these to classify comp
 Fields:
 - Name (text) — AOI name
 - Level of Interest (single select): "Lowest" | "Low" | "Medium" | "High" | "Highest"
+- Level of Interest Score (formula) - returns 1-5 depending on value of Level of Interest
 - Candidate Pool Size (single select): "Small" | "Medium" | "Large"
+- Candidate Pool Size Score (formula) - return 0-2 depending on value of Candidate Pool Size
 
 ### 2) Companies table (Codex writes these)
 
@@ -40,7 +41,7 @@ Fields Codex must populate (when possible):
 - Name (text) REQUIRED — provided by invoker
 - Website (url) REQUIRED
 - Careers Page (url)
-- Area of Interest (link to AOI record) — Codex's best guess as to which AOI the company fits into, if any (may be null)
+- Area of Interest (link to AOI record, multi) — leave blank; filled manually
 - Description (long text) REQUIRED — 2 sentences describing the company and its major products
 - Local (checkbox / boolean) REQUIRED — TRUE if Codex can find evidence of offices in San Diego County, FALSE otherwise
 - Type (single select) REQUIRED:
@@ -63,7 +64,7 @@ Fields Codex must populate (when possible):
 - CEO Rating (number) — Glassdoor float (0-1 range) stored directly; Airtable formats as percent
 
 Also present (read-only):
-- Lookups of AOI characteristic fields (do not edit)
+- Lookups and rollups of AOI characteristic fields (do not edit)
 
 ### 3) Roles table (Codex writes these)
 
@@ -80,7 +81,7 @@ Fields Codex must populate (when possible):
 Also present (read-only; never edit):
 - Lookups of AOI characteristic fields
 - Lookups of Company characteristic fields
-- Formua fields
+- Formulas and score lookups
   - Role Candidate Fit Score
   - Role Active Listing Score
   - Role Location Score
@@ -134,6 +135,8 @@ Additionally, the program should print structured logs to stdout:
 ### Glassdoor data pipeline
 
 When `OPENWEB_NINJA_API_KEY` is provided in the environment, Codex must attempt to fetch the Glassdoor metrics (canonical URL, rating, year founded, business outlook score, CEO rating) through the OpenWeb Ninja API. The current contract targets `https://api.openwebninja.com/realtime-glassdoor-data/company-search` with `query=<company name>` plus `domain=www.glassdoor.com` (overridable via env). Before changing, troubleshooting, or extending this behavior, review the official API documentation at https://www.openwebninja.com/api/real-time-glassdoor-data/docs to ensure requests stay compliant. If the API returns no match or errors, fall back to the previous DuckDuckGo + scraping path. Regardless of the source, always capture a `glassdoor.com` URL alongside any metrics that are written to Airtable.
+
+Exception: when the operator passes `--skip-glassdoor` to the CLI, Codex must skip any Glassdoor lookups entirely (no OpenWeb Ninja calls, no search fallback) and leave all Glassdoor-related Airtable fields null so API credits are preserved.
 
 ### No hallucinations
 
@@ -197,16 +200,9 @@ If Active Listing is present, set the role's Location value:
 
 ---
 
-## AOI matching algorithm
+## AOI matching
 
-Codex must:
-1) Fetch all AOI records from Airtable.
-2) Compare company mission/product description against AOI names and meanings.
-3) Choose at most one AOI link:
-   - If a strong match exists, link it.
-   - If ambiguous or no match, leave null.
-
-IMPORTANT: Never create new AOI records.
+AOI assignment is manual. Codex should not attempt to infer, link, or update AOI fields.
 
 ---
 
@@ -263,7 +259,6 @@ Agents must not write partial/fragmented data. Write company first, then roles.
 - bcorp: boolean | null
 - glassdoorPage: string | null
 - glassdoorRating: number | null
-- aoiRecordId: string | null
 - sources: string[]   (urls)
 
 ### RoleResult
@@ -296,6 +291,5 @@ For each company:
 - [ ] Local is only TRUE with explicit SD County evidence
 - [ ] If B Corp is TRUE, there is a B Lab directory source URL
 - [ ] If Glassdoor Rating is filled, there is a Glassdoor source URL
-- [ ] AOI is linked only if a strong match exists
 - [ ] Roles have reasonable Candidate Fit values
 - [ ] Active Listing only when it meets constraints

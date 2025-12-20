@@ -18,13 +18,6 @@ export class AirtableClient {
     });
   }
 
-  async listAOIs() {
-    const { data } = await this.http.get('/Areas%20of%20Interest', {
-      params: { fields: ['Name', 'Level of Interest', 'Candidate Pool Size'] },
-    });
-    return data.records || [];
-  }
-
   async findCompanyByName(name) {
     const formula = `LOWER({Name})='${encodeFormula(name.toLowerCase())}'`;
     const { data } = await this.http.get('/Companies', { params: { filterByFormula: formula } });
@@ -48,10 +41,6 @@ export class AirtableClient {
       'Business Outlook Rating': company.glassdoorBusinessOutlookRating,
       'CEO Rating': company.glassdoorCeoRating,
     };
-    if (company.aoiRecordId) {
-      fields['Area of Interest'] = [company.aoiRecordId];
-    }
-
     if (existing) {
       const { data } = await this.http.patch('/Companies', {
         records: [

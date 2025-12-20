@@ -83,13 +83,14 @@ async function scrapeGlassdoorRating(url) {
 }
 
 export class CompanyResearcher {
-  constructor(name) {
+  constructor(name, { skipGlassdoor = false } = {}) {
     this.name = name;
     this.lastScrapedWebsiteHtml = null;
     this.lastScrapedWebsiteUrl = null;
     this.lastScrapedWebsiteText = null;
     this.lastInstantAnswerText = null;
     this.internalWarnings = new Set();
+    this.skipGlassdoor = skipGlassdoor;
   }
 
   async research() {
@@ -126,7 +127,7 @@ export class CompanyResearcher {
     const [careers, bcorp, glassdoor] = await Promise.all([
       this.findCareersPage(summary.candidateCareersPage, summary.website),
       this.findBCorpEvidence(),
-      this.findGlassdoorPage(),
+      this.skipGlassdoor ? Promise.resolve(null) : this.findGlassdoorPage(),
     ]);
 
     if (careers?.url) {
@@ -317,6 +318,9 @@ export class CompanyResearcher {
   }
 
   async findGlassdoorPage() {
+    if (this.skipGlassdoor) {
+      return null;
+    }
     const apiResult = await this.fetchGlassdoorViaOpenWeb();
     if (apiResult) {
       return apiResult;
@@ -332,6 +336,9 @@ export class CompanyResearcher {
   }
 
   async fetchGlassdoorViaOpenWeb() {
+    if (this.skipGlassdoor) {
+      return null;
+    }
     if (!openWebNinjaClient?.isEnabled?.()) {
       return null;
     }
