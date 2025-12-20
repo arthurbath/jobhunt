@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { buildServiceError } from '../utils/serviceErrors.js';
 
 const DEFAULT_BASE_URL = 'https://api.openwebninja.com';
 const DEFAULT_GLASSDOOR_PATH = '/realtime-glassdoor-data/company-search';
@@ -104,6 +105,45 @@ function extractYearFounded(candidate = {}) {
   return Number.isFinite(numeric) ? numeric : null;
 }
 
+function extractOfficeLocations(candidate = {}) {
+  const raw = coerceFirstValue([
+    candidate.office_locations,
+    candidate.officeLocations,
+    candidate.offices,
+    candidate.locations,
+  ]);
+  if (!Array.isArray(raw)) return [];
+  const locations = [];
+  for (const entry of raw) {
+    if (!entry) continue;
+    if (typeof entry === 'string') {
+      const city = entry.trim();
+      if (city) {
+        locations.push({ city, country: null });
+      }
+      continue;
+    }
+    if (typeof entry === 'object') {
+      const city = coerceFirstValue([
+        entry.city,
+        entry.location,
+        entry.name,
+        entry.office_location,
+        entry.officeLocation,
+      ]);
+      const country = coerceFirstValue([
+        entry.country,
+        entry.country_name,
+        entry.countryName,
+      ]);
+      if (city || country) {
+        locations.push({ city: city || null, country: country || null });
+      }
+    }
+  }
+  return locations;
+}
+
 function extractNormalizedScore(candidate = {}, keys = []) {
   const raw = coerceFirstValue(keys.map((key) => candidate[key]));
   const numeric = Number(raw);
@@ -155,6 +195,7 @@ class OpenWebNinjaClient {
         return null;
       }
       const yearFounded = extractYearFounded(candidate);
+      const officeLocations = extractOfficeLocations(candidate);
       const businessOutlookRating = extractNormalizedScore(candidate, [
         'business_outlook_rating',
         'businessOutlookRating',
@@ -164,13 +205,15 @@ class OpenWebNinjaClient {
         url: profileUrl || null,
         rating,
         yearFounded,
+        officeLocations,
         businessOutlookRating,
         ceoRating,
         raw: candidate,
       };
     } catch (err) {
+      const formatted = buildServiceError('OpenWeb Ninja', 'Glassdoor lookup', err);
       logger.warn(
-        `OpenWeb Ninja Glassdoor lookup failed for "${companyName}": ${err.message} (see ${OPENWEB_DOCS_URL})`
+        `${formatted.message} for "${companyName}" (see ${OPENWEB_DOCS_URL})`
       );
       return null;
     }

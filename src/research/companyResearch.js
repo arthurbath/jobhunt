@@ -59,6 +59,22 @@ function htmlToPlainText(html = '') {
   return $('body').text().replace(/\s+/g, ' ').trim();
 }
 
+function isSanDiegoOfficeLocation(officeLocations = []) {
+  if (!Array.isArray(officeLocations) || officeLocations.length === 0) return false;
+  for (const location of officeLocations) {
+    if (!location) continue;
+    if (typeof location === 'string') {
+      if (findSanDiegoMentions(location).length) return true;
+      continue;
+    }
+    const city = location.city || location.location || '';
+    const country = location.country || '';
+    const combined = `${city} ${country}`.trim();
+    if (findSanDiegoMentions(combined).length) return true;
+  }
+  return false;
+}
+
 async function fetchPageText(url) {
   if (!url) return null;
   try {
@@ -108,6 +124,7 @@ export class CompanyResearcher {
       glassdoorYearFounded: null,
       glassdoorBusinessOutlookRating: null,
       glassdoorCeoRating: null,
+      local: null,
       roles: [],
       sources: [],
       warnings: [],
@@ -121,8 +138,6 @@ export class CompanyResearcher {
     summary.sources?.forEach((src) => sourcesSet.add(src));
 
     await this.applyGptInsights(baseResult, summary);
-    await this.applyGptLocalResearch(baseResult, summary, sourcesSet);
-    await this.applyGptTypeResearch(baseResult, summary, sourcesSet);
 
     const [careers, bcorp, glassdoor] = await Promise.all([
       this.findCareersPage(summary.candidateCareersPage, summary.website),
@@ -149,6 +164,17 @@ export class CompanyResearcher {
       baseResult.glassdoorCeoRating = glassdoor.ceoRating ?? null;
       sourcesSet.add(glassdoor.url);
     }
+
+    const officeLocations = glassdoor?.officeLocations;
+    const hasOfficeLocations =
+      Array.isArray(officeLocations) && officeLocations.length > 0;
+    if (hasOfficeLocations) {
+      baseResult.local = isSanDiegoOfficeLocation(officeLocations);
+    } else {
+      await this.applyGptLocalResearch(baseResult, summary, sourcesSet);
+    }
+
+    await this.applyGptTypeResearch(baseResult, summary, sourcesSet);
 
     let roles = await this.discoverRoles({
       companyName: this.name,
@@ -347,7 +373,8 @@ export class CompanyResearcher {
       if (!payload) {
         return null;
       }
-      const { url, rating, yearFounded, businessOutlookRating, ceoRating } = payload;
+      const { url, rating, yearFounded, businessOutlookRating, ceoRating, officeLocations } =
+        payload;
       if (!url && rating == null) {
         return null;
       }
@@ -357,6 +384,7 @@ export class CompanyResearcher {
         yearFounded: yearFounded ?? null,
         businessOutlookRating: businessOutlookRating ?? null,
         ceoRating: ceoRating ?? null,
+        officeLocations: Array.isArray(officeLocations) ? officeLocations : [],
       };
     } catch (err) {
       this.warnOnce('OpenWeb Ninja Glassdoor lookup failed', err);

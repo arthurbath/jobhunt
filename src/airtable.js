@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { buildServiceError } from './utils/serviceErrors.js';
 
 const API_BASE = 'https://api.airtable.com/v0';
 
@@ -18,9 +19,22 @@ export class AirtableClient {
     });
   }
 
+  async request(method, path, options = {}, operation = 'request') {
+    try {
+      return await this.http.request({ method, url: path, ...options });
+    } catch (err) {
+      throw buildServiceError('Airtable', operation, err);
+    }
+  }
+
   async findCompanyByName(name) {
     const formula = `LOWER({Name})='${encodeFormula(name.toLowerCase())}'`;
-    const { data } = await this.http.get('/Companies', { params: { filterByFormula: formula } });
+    const { data } = await this.request(
+      'get',
+      '/Companies',
+      { params: { filterByFormula: formula } },
+      'find company'
+    );
     return data.records?.[0] || null;
   }
 
@@ -42,23 +56,40 @@ export class AirtableClient {
       'CEO Rating': company.glassdoorCeoRating,
     };
     if (existing) {
-      const { data } = await this.http.patch('/Companies', {
-        records: [
-          {
-            id: existing.id,
-            fields,
+      const { data } = await this.request(
+        'patch',
+        '/Companies',
+        {
+          data: {
+            records: [
+              {
+                id: existing.id,
+                fields,
+              },
+            ],
           },
-        ],
-      });
+        },
+        'update company'
+      );
       return { record: data.records[0], created: false };
     }
-    const { data } = await this.http.post('/Companies', { records: [{ fields }] });
+    const { data } = await this.request(
+      'post',
+      '/Companies',
+      { data: { records: [{ fields }] } },
+      'create company'
+    );
     return { record: data.records[0], created: true };
   }
 
   async findRoleRecord(companyRecordId, roleName) {
     const formula = `AND(LOWER({Name})='${encodeFormula(roleName.toLowerCase())}', SEARCH('${companyRecordId}', ARRAYJOIN({Company})))`;
-    const { data } = await this.http.get('/Roles', { params: { filterByFormula: formula } });
+    const { data } = await this.request(
+      'get',
+      '/Roles',
+      { params: { filterByFormula: formula } },
+      'find role'
+    );
     return data.records?.[0] || null;
   }
 
@@ -77,10 +108,20 @@ export class AirtableClient {
     const endpointPayload = { records: [{ fields }] };
     if (existing) {
       endpointPayload.records[0].id = existing.id;
-      const { data } = await this.http.patch('/Roles', endpointPayload);
+      const { data } = await this.request(
+        'patch',
+        '/Roles',
+        { data: endpointPayload },
+        'update role'
+      );
       return { record: data.records[0], created: false };
     }
-    const { data } = await this.http.post('/Roles', endpointPayload);
+    const { data } = await this.request(
+      'post',
+      '/Roles',
+      { data: endpointPayload },
+      'create role'
+    );
     return { record: data.records[0], created: true };
   }
 
@@ -89,7 +130,12 @@ export class AirtableClient {
     const chunkSize = 10;
     for (let i = 0; i < recordIds.length; i += chunkSize) {
       const chunk = recordIds.slice(i, i + chunkSize);
-      await this.http.delete(`/${tableName}`, { params: { records: chunk } });
+      await this.request(
+        'delete',
+        `/${tableName}`,
+        { params: { records: chunk } },
+        `delete records (${tableName})`
+      );
     }
   }
 
@@ -100,7 +146,12 @@ export class AirtableClient {
     }
     const companyRecordId = existing.id;
     const formula = `SEARCH('${companyRecordId}', ARRAYJOIN({Company}))`;
-    const { data } = await this.http.get('/Roles', { params: { filterByFormula: formula } });
+    const { data } = await this.request(
+      'get',
+      '/Roles',
+      { params: { filterByFormula: formula } },
+      'find roles for company delete'
+    );
     const roleIds = (data.records || []).map((record) => record.id);
     if (roleIds.length) {
       await this.deleteRecords('Roles', roleIds);

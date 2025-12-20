@@ -146,11 +146,11 @@ If a fact cannot be verified with a source URL:
 
 ### Local (San Diego County) logic
 
-Set a compmany's Local to TRUE only if you find evidence of:
+Set a company's Local to TRUE only if you find evidence of:
 - an office address in San Diego County, OR
 - a company page explicitly listing "San Diego" (or a San Diego County city) as an office location.
 
-Codex no longer trusts heuristic keyword matches for this field. It must run the OpenAI-powered local research step (fed with official-site copy, the canonical website/domain, plus short search snippets referencing San Diego County cities) and only set Local=TRUE when that step cites explicit evidence tied to those sources for the same company (matching brand/domain). If OpenAI is unavailable or provides no confirmation/evidence, Local remains FALSE.
+Codex no longer trusts heuristic keyword matches for this field. If Glassdoor data includes an `office_locations` array (from OpenWeb Ninja), use it as the primary check: when any office city matches a San Diego County city, set Local=TRUE; if the array is present but has no San Diego County cities, set Local=FALSE and skip OpenAI locality research. If Glassdoor returns no office locations or no company match, run the OpenAI-powered local research step (fed with official-site copy, the canonical website/domain, plus short search snippets referencing San Diego County cities) and only set Local=TRUE when that step cites explicit evidence tied to those sources for the same company (matching brand/domain). If OpenAI is unavailable or provides no confirmation/evidence, Local remains FALSE.
 
 ### Company Type classification
 

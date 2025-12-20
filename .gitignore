@@ -13,3 +13,4 @@ node_modules/
 # macOS metadata
 .DS_Store
 *.swp
+docs/Companies.txt

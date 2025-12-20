@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { config } from '../config.js';
+import { buildServiceError } from '../utils/serviceErrors.js';
 
 class OpenAIClient {
   constructor(apiKey) {
@@ -15,13 +16,17 @@ class OpenAIClient {
     if (!this.enabled) {
       throw new Error('OpenAI API key not configured. Set OPENAI_API_KEY.');
     }
-    const completion = await this.client.chat.completions.create({
-      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-      temperature,
-      response_format: responseFormat,
-      messages,
-    });
-    return completion.choices[0]?.message?.content;
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature,
+        response_format: responseFormat,
+        messages,
+      });
+      return completion.choices[0]?.message?.content;
+    } catch (err) {
+      throw buildServiceError('OpenAI', 'chat completion', err);
+    }
   }
 }
 
