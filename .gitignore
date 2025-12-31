@@ -13,4 +13,6 @@ node_modules/
 # macOS metadata
 .DS_Store
 *.swp
+.cache/
 docs/Companies.txt
+docs/Jobhunt.code-workspace
